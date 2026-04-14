@@ -1,3 +1,4 @@
+@props(['title','categories'])
 <!DOCTYPE html>
 <html lang="vi">
 <head>

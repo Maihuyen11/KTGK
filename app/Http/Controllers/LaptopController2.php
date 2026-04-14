@@ -5,10 +5,46 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 use App\Mail\OrderSuccess;
 
 class LaptopController2 extends Controller
 {
+    private function getItemName(array $item): string
+    {
+        return $item['name'] ?? $item['tieu_de'] ?? 'San pham';
+    }
+
+    private function getItemQuantity(array $item): int
+    {
+        return (int) ($item['quantity'] ?? $item['so_luong'] ?? 1);
+    }
+
+    private function getItemPrice(array $item): float
+    {
+        return (float) ($item['price'] ?? $item['gia'] ?? $item['don_gia'] ?? 0);
+    }
+
+    private function normalizeCart(array $cart): array
+    {
+        $normalized = [];
+
+        foreach ($cart as $id => $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $normalized[$id] = [
+                'name' => $this->getItemName($item),
+                'quantity' => $this->getItemQuantity($item),
+                'price' => $this->getItemPrice($item),
+            ];
+        }
+
+        return $normalized;
+    }
+
     /**
      * Hàm dùng chung để lấy dữ liệu cho Layout.
      * Đảm bảo luôn có $categories và $title để layout của thầy không bị lỗi Undefined.
@@ -24,12 +60,31 @@ class LaptopController2 extends Controller
     public function search(Request $request)
     {
         $layoutData = $this->getLayoutData('Kết quả tìm kiếm');
-        $keyword = $request->input('keyword');
+        $keyword = trim((string) $request->input('keyword', ''));
 
-        $laptops = DB::table('san_pham')
-            ->where('status', 1) // Chỉ lấy sản phẩm chưa bị xóa mềm (Câu 7) [cite: 23]
-            ->where('tieu_de', 'LIKE', "%$keyword%")
-            ->paginate(20); 
+        $query = DB::table('san_pham');
+
+        if (Schema::hasColumn('san_pham', 'status')) {
+            $query->where('status', 1);
+        }
+
+        if ($keyword !== '') {
+            $query->where(function ($subQuery) use ($keyword) {
+                if (Schema::hasColumn('san_pham', 'tieu_de')) {
+                    $subQuery->orWhere('tieu_de', 'LIKE', "%{$keyword}%");
+                }
+
+                if (Schema::hasColumn('san_pham', 'ten_san_pham')) {
+                    $subQuery->orWhere('ten_san_pham', 'LIKE', "%{$keyword}%");
+                }
+
+                if (Schema::hasColumn('san_pham', 'mo_ta')) {
+                    $subQuery->orWhere('mo_ta', 'LIKE', "%{$keyword}%");
+                }
+            });
+        }
+
+        $laptops = $query->paginate(20);
 
         // Gộp dữ liệu sản phẩm với dữ liệu layout
         $data = array_merge($layoutData, [
@@ -45,9 +100,10 @@ class LaptopController2 extends Controller
     {
         $layoutData = $this->getLayoutData('Giỏ hàng của bạn');
         $cart = session()->get('cart', []);
+        $normalizedCart = $this->normalizeCart($cart);
 
         $data = array_merge($layoutData, [
-            'cart' => $cart
+            'cart' => $normalizedCart
         ]);
 
         return view('laptop.cart', $data);
@@ -57,35 +113,43 @@ class LaptopController2 extends Controller
     public function checkout(Request $request)
     {
         $cart = session()->get('cart', []);
+        $normalizedCart = $this->normalizeCart($cart);
         
-        if (empty($cart)) {
+        if (empty($normalizedCart)) {
             return redirect()->back()->with('error', 'Giỏ hàng trống!');
         }
 
-        // 1. Lưu đơn hàng vào database [cite: 14]
-        $donHangId = DB::table('don_hang')->insertGetId([
-            'user_id' => auth()->id() ?? 0,            
-            'ngay_dat' => now(),
-            'tong_tien' => array_sum(array_map(fn($item) => $item['price'] * $item['quantity'], $cart)),
-            'hinh_thuc_thanh_toan' => $request->payment_method ?? 'Tiền mặt',
-            'status' => 0 // 0 = Chờ xử lý, 1 = Đang giao, 2 = Hoàn thành, 3 = Hủy (Câu 7 bổ sung) [cite: 23]    
+        $tongTien = array_sum(array_map(fn($item) => $item['price'] * $item['quantity'], $normalizedCart));
 
-        ]);
-
-        // 2. Lưu chi tiết đơn hàng [cite: 14]
-        foreach ($cart as $id => $details) {
-            DB::table('chi_tiet_don_hang')->insert([
-                'ma_don_hang' => $donHangId,
-                'laptop_id' => $id,
-                'so_luong' => $details['quantity'],
-                'don_gia' => $details['price']
+        if (Schema::hasTable('don_hang') && Schema::hasTable('chi_tiet_don_hang')) {
+            $donHangId = DB::table('don_hang')->insertGetId([
+                'user_id' => auth()->id() ?? 0,
+                'ngay_dat' => now(),
+                'tong_tien' => $tongTien,
+                'hinh_thuc_thanh_toan' => $request->payment_method ?? 'Tien mat',
+                'status' => 0,
             ]);
-        }
 
-        // 3. Gửi mail thật sau khi đặt hàng thành công (Câu 4 bổ sung)
-        if (auth()->check()) {
-            $donHang = DB::table('don_hang')->where('id', $donHangId)->first();
-            Mail::to(auth()->user()->email)->send(new OrderSuccess($donHang));
+            foreach ($normalizedCart as $id => $details) {
+                DB::table('chi_tiet_don_hang')->insert([
+                    'ma_don_hang' => $donHangId,
+                    'laptop_id' => $id,
+                    'so_luong' => $details['quantity'],
+                    'don_gia' => $details['price']
+                ]);
+            }
+
+            if (auth()->check()) {
+                try {
+                    $donHang = DB::table('don_hang')->where('id', $donHangId)->first();
+
+                    if ($donHang) {
+                        Mail::to(auth()->user()->email)->send(new OrderSuccess($donHang));
+                    }
+                } catch (\Throwable $e) {
+                    Log::warning('Khong gui duoc mail xac nhan don hang', ['message' => $e->getMessage()]);
+                }
+            }
         }
 
         session()->forget('cart');

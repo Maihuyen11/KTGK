@@ -7,9 +7,9 @@
             @forelse($laptops as $item)
                 <div class="laptop">
                     <a href="{{ url('laptop/'.$item->id) }}">
-                        <img src="{{ asset('storage/image/'.$item->hinh_anh) }}" width="100%">
-                        <p>{{ $item->tieu_de }}</p>
-                        <p>{{ number_format($item->gia) }}đ</p>
+                        <img src="{{ asset('storage/image/'.($item->hinh_anh ?? '')) }}" width="100%">
+                        <p>{{ $item->tieu_de ?? ($item->ten_san_pham ?? 'San pham') }}</p>
+                        <p>{{ number_format($item->gia ?? ($item->price ?? 0)) }}đ</p>
                     </a>
                 </div>
             @empty

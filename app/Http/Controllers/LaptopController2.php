@@ -37,7 +37,7 @@ class LaptopController2 extends Controller
             'keyword' => $keyword
         ]);
 
-        return view('search_results', $data);
+        return view('laptop.search_results', $data);
     }
 
     // CÂU 4: Hiển thị giỏ hàng 
@@ -50,7 +50,7 @@ class LaptopController2 extends Controller
             'cart' => $cart
         ]);
 
-        return view('cart', $data);
+        return view('laptop.cart', $data);
     }
 
     // CÂU 4: Xử lý đặt hàng & Gửi mail [cite: 14]

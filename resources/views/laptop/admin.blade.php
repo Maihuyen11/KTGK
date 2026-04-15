@@ -63,7 +63,7 @@
         <div class="d-flex justify-content-center gap-1">
 
             {{-- Xem --}}
-            <a href="{{ route('laptops.show', $laptop->id) }}"
+            <a href="{{ route('laptop.detail', $laptop->id) }}"
                class="btn btn-primary btn-sm">
                 Xem
             </a>
